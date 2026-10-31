@@ -26,6 +26,7 @@
   };
 
   let state = null;
+  const thumb = (src) => (/^\/uploads\/[^/]+\.(jpe?g|png|webp|gif)$/i.test(src || '') ? `/img/s${src}` : src);
   let dirty = false;
 
   // ------------------------------------------------------------------
@@ -234,13 +235,13 @@
   // An image/GIF/audio slot: upload a file or paste a URL.
   function mediaField(path, label, accept, help) {
     const val = getP(state, path) || '';
-    const thumb = h('div', { class: 'media__thumb' });
+    const thumbBox = h('div', { class: 'media__thumb' });
     const urlInput = h('input', { type: 'text', placeholder: 'Upload, or paste a GIF/image URL' });
     urlInput.value = val;
     const progress = h('div', { class: 'uploads' });
     const paint = () => {
       const v = getP(state, path);
-      thumb.innerHTML = v ? `<img src="${esc(v)}" alt="" />` : '🖼️';
+      thumbBox.innerHTML = v ? `<img src="${esc(thumb(v))}" alt="" />` : '🖼️';
     };
     urlInput.addEventListener('input', () => { setP(state, path, urlInput.value.trim()); markDirty(); paint(); });
     const uploadBtn = h('button', {
@@ -265,7 +266,7 @@
     paint();
     return h('div', { class: 'field' },
       h('span', {}, label),
-      h('div', { class: 'media' }, thumb, h('div', { class: 'media__fields' }, urlInput, h('div', {}, uploadBtn), progress)),
+      h('div', { class: 'media' }, thumbBox, h('div', { class: 'media__fields' }, urlInput, h('div', {}, uploadBtn), progress)),
       help ? h('small', {}, help) : null);
   }
 
@@ -297,7 +298,7 @@
         date.addEventListener('input', () => { p.date = date.value; markDirty(); });
         const mv = (d) => { [photos[i], photos[i + d]] = [photos[i + d], photos[i]]; markDirty(); render(); };
         grid.appendChild(h('div', { class: 'photo' },
-          h('div', { class: 'photo__img' }, h('img', { src: p.src, alt: '', loading: 'lazy' }), h('span', { class: 'photo__badge' }, String(i + 1))),
+          h('div', { class: 'photo__img' }, h('img', { src: thumb(p.src), alt: '', loading: 'lazy' }), h('span', { class: 'photo__badge' }, String(i + 1))),
           h('div', { class: 'photo__body' }, cap, date,
             h('div', { class: 'photo__tools' },
               h('button', { class: 'icon-btn', type: 'button', title: 'Move earlier', disabled: i === 0 || null, onclick: () => mv(-1) }, '←'),

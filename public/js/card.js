@@ -11,6 +11,8 @@
   };
   const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
   const rand = (a, b) => a + Math.random() * (b - a);
+  // Our own images are served resized: s = thumb, m = polaroid, l = lightbox, g = GIF.
+  const pic = (src, size) => (/^\/(uploads|memes)\/[^/]+$/.test(src || '') ? `/img/${size}${src}` : src);
   const pick = (arr) => arr[Math.floor(Math.random() * arr.length)];
 
   const REDUCED = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
@@ -429,7 +431,7 @@
       const card = el('div', `polaroid${p.src ? '' : ' polaroid--empty'}`);
       card.innerHTML = `
         <span class="polaroid__tape"></span>
-        <div class="polaroid__img">${p.src ? `<img src="${esc(p.src)}" alt="${esc(p.caption || 'Memory')}" ${i > 2 ? 'loading="lazy"' : ''} decoding="async" draggable="false" />` : esc(p.emoji)}</div>
+        <div class="polaroid__img">${p.src ? `<img src="${esc(pic(p.src, 'm'))}" alt="${esc(p.caption || 'Memory')}" decoding="async" draggable="false" />` : esc(p.emoji)}</div>
         <div class="polaroid__cap">${esc(p.caption || '')}${p.date ? `<span class="polaroid__date">${esc(formatDate(p.date))}</span>` : ''}</div>`;
       card._data = p;
       card._tilt = (i % 2 ? 1 : -1) * rand(2, 5);
@@ -549,7 +551,7 @@
       if (reps % 2) reps++;
       for (let r = 0; r < reps; r++) {
         list.forEach((p) => {
-          const b = el('button', 'film__item', `<img src="${esc(p.src)}" alt="" loading="lazy" decoding="async" />`);
+          const b = el('button', 'film__item', `<img src="${esc(pic(p.src, 's'))}" alt="" decoding="async" />`);
           b.tabIndex = -1;
           b.addEventListener('click', () => openLightbox(p));
           track.appendChild(b);
@@ -570,7 +572,11 @@
   // Lightbox
   function openLightbox(p) {
     const lb = $('#lightbox');
-    $('#lightboxImg').src = p.src;
+    const lbImg = $('#lightboxImg');
+    lbImg.src = pic(p.src, 'm');
+    const big = new Image();
+    big.onload = () => { if (lbImg.src.endsWith(pic(p.src, 'm'))) lbImg.src = big.src; };
+    big.src = pic(p.src, 'l');
     $('#lightboxCap').textContent = [p.caption, p.date ? formatDate(p.date) : ''].filter(Boolean).join(' · ');
     lb.hidden = false;
     gsap.fromTo(lb, { opacity: 0 }, { opacity: 1, duration: 0.25 });
@@ -589,7 +595,7 @@
     const items = (C.memes?.items || []).filter((m) => m && m.src);
     if (!items.length) { wrap.closest('section').remove(); return; }
     items.forEach((m) => {
-      const f = el('figure', 'meme', `<div class="meme__img"><img src="${esc(m.src)}" alt="${esc(m.caption || 'meme')}" loading="lazy" decoding="async" /></div><figcaption>${esc(m.caption || '')}</figcaption>`);
+      const f = el('figure', 'meme', `<div class="meme__img"><img src="${esc(pic(m.src, 'g'))}" alt="${esc(m.caption || 'meme')}" decoding="async" /></div><figcaption>${esc(m.caption || '')}</figcaption>`);
       wrap.appendChild(f);
       f.addEventListener('click', (e) => {
         Sound.blip(Math.floor(rand(0, 6)));
@@ -614,7 +620,7 @@
     const paras = String(C.letter?.body || '').split(/\n\s*\n/).filter(Boolean);
     body.innerHTML = paras.map((p) => `<p>${esc(p).replace(/\n/g, '<br>')}</p>`).join('');
     const gif = $('#letterGif');
-    if (C.letter?.gif) gif.src = C.letter.gif;
+    if (C.letter?.gif) gif.src = pic(C.letter.gif, 'g');
     else gif.remove();
 
     const env = $('#envelope');
@@ -923,7 +929,7 @@
 
   function buildRsvp() {
     const waiting = $('#waitingGif');
-    if (C.rsvp?.waitingGif) waiting.src = C.rsvp.waitingGif;
+    if (C.rsvp?.waitingGif) waiting.src = pic(C.rsvp.waitingGif, 'g');
     else waiting.closest('.rsvp__waiting').remove();
 
     const getFood = buildChips('#foodChips', C.rsvp?.foodOptions);
@@ -1021,7 +1027,7 @@
       const link = $('#waLink');
       link.href = url;
       const sg = $('#successGif');
-      if (C.rsvp?.successGif) sg.src = C.rsvp.successGif;
+      if (C.rsvp?.successGif) sg.src = pic(C.rsvp.successGif, 'g');
       else sg.remove();
 
       Sound.fanfare();
@@ -1076,6 +1082,32 @@
   }
 
   // ---------------------------------------------------------------
+  // Preload every image in the order she'll meet them, a few at a time,
+  // while she's still on the gift screen. They're cached for a year, so
+  // the <img> tags later show instantly.
+  // ---------------------------------------------------------------
+  function preloadAll() {
+    const list = [];
+    const ph = (C.memories?.photos || []).filter((p) => p && p.src);
+    ph.slice(0, 3).forEach((p) => list.push(pic(p.src, 'm')));
+    ph.forEach((p) => list.push(pic(p.src, 's')));
+    ph.slice(3).forEach((p) => list.push(pic(p.src, 'm')));
+    (C.memes?.items || []).forEach((m) => m && m.src && list.push(pic(m.src, 'g')));
+    [C.letter?.gif, C.rsvp?.waitingGif, C.rsvp?.successGif].forEach((g) => g && list.push(pic(g, 'g')));
+    const keep = [];
+    let i = 0;
+    const next = () => {
+      if (i >= list.length) return;
+      const img = new Image();
+      img.decoding = 'async';
+      img.onload = img.onerror = next;
+      img.src = list[i++];
+      keep.push(img);
+    };
+    for (let k = 0; k < 4; k++) next();
+  }
+
+  // ---------------------------------------------------------------
   // Boot
   // ---------------------------------------------------------------
   async function boot() {
@@ -1086,6 +1118,7 @@
       C = {};
     }
     if (C.pageTitle) document.title = C.pageTitle;
+    preloadAll();
     if (C.music?.src) Sound.setTrack(C.music.src);
     else if (C.music && C.music.useMusicBox === false) $('#musicBtn').remove();
 

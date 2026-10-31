@@ -2,6 +2,8 @@
 
 const express = require('express');
 const multer = require('multer');
+const compression = require('compression');
+const sharp = require('sharp');
 const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
@@ -13,6 +15,8 @@ const UPLOAD_DIR = path.join(DATA_DIR, 'uploads');
 const CONTENT_FILE = path.join(DATA_DIR, 'content.json');
 const RSVP_FILE = path.join(DATA_DIR, 'rsvps.json');
 const SECRET_FILE = path.join(DATA_DIR, 'secret.key');
+const CACHE_DIR = path.join(DATA_DIR, 'cache');
+const MEMES_DIR = path.join(__dirname, 'public/memes');
 const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || '';
 const SESSION_TTL_MS = 1000 * 60 * 60 * 24 * 14;
 
@@ -21,6 +25,7 @@ if (!ADMIN_PASSWORD) {
 }
 
 fs.mkdirSync(UPLOAD_DIR, { recursive: true });
+fs.mkdirSync(CACHE_DIR, { recursive: true });
 
 // ---------- storage helpers ----------
 
@@ -164,11 +169,86 @@ const upload = multer({
   },
 });
 
+// ---------- resized images ----------
+// Originals are ~2000px / 600KB+. The card asks for /img/<size>/<dir>/<file>
+// and gets a small WebP (or JPEG for old browsers), generated once and cached.
+
+const SIZES = { s: 360, m: 900, l: 1600, g: 480 };
+const SOURCES = { uploads: UPLOAD_DIR, memes: MEMES_DIR };
+const SAFE_NAME = /^[\w.-]+\.(jpe?g|png|webp|gif)$/i;
+sharp.cache(false);
+sharp.concurrency(2);
+
+const inflight = new Map();
+
+function variant(size, dir, name, fmt) {
+  const out = path.join(CACHE_DIR, `${size}-${dir}-${name}.${fmt}`);
+  if (fs.existsSync(out)) return Promise.resolve(out);
+  if (inflight.has(out)) return inflight.get(out);
+  const src = path.join(SOURCES[dir], name);
+  const animated = /\.gif$/i.test(name);
+  let pipe = sharp(src, { animated, limitInputPixels: 80e6 })
+    .rotate()
+    .resize({ width: SIZES[size], height: SIZES[size], fit: 'inside', withoutEnlargement: true });
+  pipe = fmt === 'webp'
+    ? pipe.webp({ quality: animated ? 70 : 74, effort: animated ? 3 : 4, smartSubsample: true })
+    : pipe.jpeg({ quality: 76, mozjpeg: true, progressive: true });
+  const tmp = `${out}.${process.pid}.tmp`;
+  const job = pipe
+    .toFile(tmp)
+    .then(() => { fs.renameSync(tmp, out); return out; })
+    .finally(() => inflight.delete(out));
+  inflight.set(out, job);
+  return job;
+}
+
+// Generate the variants the card uses ahead of time, one at a time, so the
+// first visitor never waits on resizing.
+let warmQueue = Promise.resolve();
+function prewarm(content) {
+  const want = [];
+  const add = (src, sizes) => {
+    const m = /^\/(uploads|memes)\/([^/]+)$/.exec(src || '');
+    if (m && SAFE_NAME.test(m[2])) for (const s of sizes) want.push([s, m[1], m[2]]);
+  };
+  for (const p of content.memories?.photos || []) add(p.src, ['s', 'm', 'l']);
+  for (const m of content.memes?.items || []) add(m.src, ['g']);
+  add(content.letter?.gif, ['g']);
+  add(content.rsvp?.waitingGif, ['g']);
+  add(content.rsvp?.successGif, ['g']);
+  warmQueue = warmQueue.then(async () => {
+    for (const [s, dir, name] of want) {
+      try { await variant(s, dir, name, 'webp'); } catch (e) { console.warn('prewarm failed', name, e.message); }
+    }
+  });
+}
+
 // ---------- app ----------
 
 const app = express();
 app.disable('x-powered-by');
 app.set('trust proxy', 'loopback');
+app.use(compression());
+
+app.get('/img/:size/:dir/:name', async (req, res) => {
+  const { size, dir, name } = req.params;
+  if (!SIZES[size] || !SOURCES[dir] || !SAFE_NAME.test(name)) return res.status(404).end();
+  const src = path.join(SOURCES[dir], name);
+  if (!fs.existsSync(src)) return res.status(404).end();
+  const webp = /image\/webp/.test(req.headers.accept || '');
+  res.set('Vary', 'Accept');
+  // Old browsers without WebP: GIFs stay GIFs (keeps the animation).
+  if (!webp && /\.gif$/i.test(name)) {
+    return res.sendFile(src, { maxAge: '365d', immutable: true });
+  }
+  try {
+    const file = await variant(size, dir, name, webp ? 'webp' : 'jpg');
+    res.sendFile(file, { maxAge: '365d', immutable: true, headers: { 'Content-Type': webp ? 'image/webp' : 'image/jpeg' } });
+  } catch (e) {
+    console.warn('resize failed', name, e.message);
+    res.sendFile(src, { maxAge: '1d' });
+  }
+});
 
 app.use(express.json({ limit: '1mb' }));
 
@@ -228,6 +308,7 @@ app.put('/api/admin/content', requireAdmin, (req, res) => {
   for (const k of Object.keys(DEFAULTS)) if (k in req.body) clean[k] = req.body[k];
   writeJSON(CONTENT_FILE, clean);
   pruneUploads(JSON.stringify(clean));
+  prewarm(getContent());
   res.json({ ok: true, content: getContent() });
 });
 
@@ -239,6 +320,10 @@ function pruneUploads(json) {
     const cutoff = Date.now() - 60 * 60 * 1000;
     for (const name of names) {
       if (json.includes(`/uploads/${name}`)) continue;
+      // Cached variants of a removed upload go too.
+      fs.readdir(CACHE_DIR, (e, cached) => {
+        if (!e) for (const c of cached) if (c.includes(`-uploads-${name}.`)) fs.rm(path.join(CACHE_DIR, c), { force: true }, () => {});
+      });
       const file = path.join(UPLOAD_DIR, name);
       fs.stat(file, (e, st) => {
         if (!e && st.isFile() && st.mtimeMs < cutoff) fs.rm(file, { force: true }, () => {});
@@ -255,6 +340,9 @@ app.post('/api/admin/upload', requireAdmin, (req, res) => {
     }
     if (!req.file) return res.status(400).json({ error: 'No file received' });
     res.json({ ok: true, url: `/uploads/${req.file.filename}` });
+    if (SAFE_NAME.test(req.file.filename)) {
+      warmQueue = warmQueue.then(() => Promise.all(['s', 'm'].map((s) => variant(s, 'uploads', req.file.filename, 'webp'))).catch(() => {}));
+    }
   });
 });
 
@@ -335,4 +423,7 @@ app.use(express.static(path.join(__dirname, 'public'), { index: false, maxAge: '
 
 app.use((req, res) => res.status(404).send('Not found'));
 
-app.listen(PORT, () => console.log(`tika-birthday listening on :${PORT} (data: ${DATA_DIR})`));
+app.listen(PORT, () => {
+  console.log(`tika-birthday listening on :${PORT} (data: ${DATA_DIR})`);
+  prewarm(getContent());
+});
