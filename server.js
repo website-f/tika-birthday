@@ -285,20 +285,51 @@ app.use('/memes', express.static(path.join(__dirname, 'public/memes'), { maxAge:
 // filled in here so links shared in WhatsApp show her name.
 const BUILD = Date.now().toString(36);
 const escapeHtml = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
-function sendPage(file, res) {
+function shareTags(req, c) {
+  // Crawlers need absolute URLs; orxies terminates TLS in front of us.
+  const proto = req.headers['x-forwarded-proto'] || (req.secure ? 'https' : 'http');
+  const origin = `${proto}://${req.headers.host}`;
+  const s = c.share || {};
+  const title = escapeHtml(s.title || c.pageTitle);
+  const desc = escapeHtml(s.description || '');
+  const tags = [
+    `<meta name="description" content="${desc}" />`,
+    `<meta property="og:title" content="${title}" />`,
+    `<meta property="og:description" content="${desc}" />`,
+    `<meta property="og:type" content="website" />`,
+    `<meta property="og:url" content="${escapeHtml(origin)}/" />`,
+    `<meta name="twitter:card" content="${s.image ? 'summary_large_image' : 'summary'}" />`,
+    `<meta name="twitter:title" content="${title}" />`,
+    `<meta name="twitter:description" content="${desc}" />`,
+  ];
+  if (s.image) {
+    const img = escapeHtml(/^https?:\/\//.test(s.image) ? s.image : origin + s.image);
+    tags.push(
+      `<meta property="og:image" content="${img}" />`,
+      `<meta property="og:image:secure_url" content="${img}" />`,
+      `<meta property="og:image:alt" content="${title}" />`,
+      `<meta name="twitter:image" content="${img}" />`,
+    );
+    if (/\.jpe?g$/i.test(s.image)) tags.push('<meta property="og:image:type" content="image/jpeg" />');
+  }
+  return tags.join('\n  ');
+}
+
+function sendPage(file, req, res) {
   const c = getContent();
   const html = fs
     .readFileSync(path.join(__dirname, 'public', file), 'utf8')
+    .replace('{{SHARE_TAGS}}', shareTags(req, c))
     .replaceAll('{{TITLE}}', escapeHtml(c.pageTitle))
     .replaceAll('{{NAME}}', escapeHtml(c.herName))
     .replaceAll('{{V}}', BUILD);
   res.set('Cache-Control', 'no-cache').type('html').send(html);
 }
 
-app.get('/', (req, res) => sendPage('index.html', res));
+app.get('/', (req, res) => sendPage('index.html', req, res));
 app.get(['/admin', '/admin/'], (req, res) => {
   res.set('X-Robots-Tag', 'noindex');
-  sendPage('admin/index.html', res);
+  sendPage('admin/index.html', req, res);
 });
 app.use(express.static(path.join(__dirname, 'public'), { index: false, maxAge: '1h' }));
 

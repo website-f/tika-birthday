@@ -6,6 +6,13 @@ module.exports = {
   fromName: 'Fitri',
   pageTitle: 'Happy Birthday Nurul Atikah 💖',
 
+  // Link preview shown when the URL is shared (WhatsApp, IG, Telegram...).
+  share: {
+    title: 'Happy Birthday, Tika! 🎂💖',
+    description: 'Psst… someone made you a little birthday surprise 🎁 Tap to unwrap it, sayang! 💕',
+    image: '',
+  },
+
   gate: {
     title: 'Psst… Tika!',
     subtitle: 'Someone made you a little something. Sound on 🔊',
