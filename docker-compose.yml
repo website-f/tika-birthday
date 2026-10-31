@@ -1,0 +1,10 @@
+services:
+  card:
+    build: .
+    restart: unless-stopped
+    env_file: .env
+    ports:
+      # Loopback only; orxies terminates TLS for tikahb.fitrii.site and proxies here.
+      - "127.0.0.1:8095:3000"
+    volumes:
+      - ./data:/data

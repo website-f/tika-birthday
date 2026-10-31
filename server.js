@@ -1,0 +1,307 @@
+'use strict';
+
+const express = require('express');
+const multer = require('multer');
+const crypto = require('crypto');
+const fs = require('fs');
+const path = require('path');
+const DEFAULTS = require('./defaults');
+
+const PORT = Number(process.env.PORT) || 3000;
+const DATA_DIR = path.resolve(process.env.DATA_DIR || path.join(__dirname, 'data'));
+const UPLOAD_DIR = path.join(DATA_DIR, 'uploads');
+const CONTENT_FILE = path.join(DATA_DIR, 'content.json');
+const RSVP_FILE = path.join(DATA_DIR, 'rsvps.json');
+const SECRET_FILE = path.join(DATA_DIR, 'secret.key');
+const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || '';
+const SESSION_TTL_MS = 1000 * 60 * 60 * 24 * 14;
+
+if (!ADMIN_PASSWORD) {
+  console.warn('[warn] ADMIN_PASSWORD is not set — the admin portal is locked.');
+}
+
+fs.mkdirSync(UPLOAD_DIR, { recursive: true });
+
+// ---------- storage helpers ----------
+
+function readJSON(file, fallback) {
+  try {
+    return JSON.parse(fs.readFileSync(file, 'utf8'));
+  } catch {
+    return fallback;
+  }
+}
+
+function writeJSON(file, data) {
+  const tmp = `${file}.${process.pid}.tmp`;
+  fs.writeFileSync(tmp, JSON.stringify(data, null, 2));
+  fs.renameSync(tmp, file);
+}
+
+function isPlainObject(v) {
+  return v !== null && typeof v === 'object' && !Array.isArray(v);
+}
+
+// Saved objects are merged over defaults so new default fields appear
+// automatically; arrays are taken from the saved copy as-is.
+function merge(base, over) {
+  if (!isPlainObject(base) || !isPlainObject(over)) return over === undefined ? base : over;
+  const out = { ...base };
+  for (const k of Object.keys(over)) out[k] = merge(base[k], over[k]);
+  return out;
+}
+
+function getContent() {
+  return merge(DEFAULTS, readJSON(CONTENT_FILE, {}));
+}
+
+function getSecret() {
+  if (process.env.SESSION_SECRET) return process.env.SESSION_SECRET;
+  try {
+    return fs.readFileSync(SECRET_FILE, 'utf8').trim();
+  } catch {
+    const s = crypto.randomBytes(48).toString('hex');
+    fs.writeFileSync(SECRET_FILE, s, { mode: 0o600 });
+    return s;
+  }
+}
+const SECRET = getSecret();
+
+// ---------- auth ----------
+
+function sign(payload) {
+  return crypto.createHmac('sha256', SECRET).update(payload).digest('base64url');
+}
+
+function makeToken() {
+  const payload = `admin.${Date.now() + SESSION_TTL_MS}`;
+  return `${payload}.${sign(payload)}`;
+}
+
+function verifyToken(token) {
+  if (typeof token !== 'string') return false;
+  const i = token.lastIndexOf('.');
+  if (i < 0) return false;
+  const payload = token.slice(0, i);
+  const sig = Buffer.from(token.slice(i + 1));
+  const expected = Buffer.from(sign(payload));
+  if (sig.length !== expected.length || !crypto.timingSafeEqual(sig, expected)) return false;
+  const exp = Number(payload.split('.')[1]);
+  return Number.isFinite(exp) && exp > Date.now();
+}
+
+function parseCookies(header = '') {
+  const out = {};
+  for (const part of header.split(';')) {
+    const i = part.indexOf('=');
+    if (i > 0) out[part.slice(0, i).trim()] = decodeURIComponent(part.slice(i + 1).trim());
+  }
+  return out;
+}
+
+function isHttps(req) {
+  return req.secure || req.headers['x-forwarded-proto'] === 'https';
+}
+
+function requireAdmin(req, res, next) {
+  if (verifyToken(parseCookies(req.headers.cookie).tb_admin)) return next();
+  res.status(401).json({ error: 'Not logged in' });
+}
+
+function passwordMatches(input) {
+  if (!ADMIN_PASSWORD || typeof input !== 'string') return false;
+  const a = crypto.createHash('sha256').update(input).digest();
+  const b = crypto.createHash('sha256').update(ADMIN_PASSWORD).digest();
+  return crypto.timingSafeEqual(a, b);
+}
+
+// Tiny in-memory limiter: enough to stop password guessing / RSVP spam.
+const hits = new Map();
+function limited(key, max, windowMs) {
+  const now = Date.now();
+  const h = hits.get(key);
+  if (!h || h.reset < now) {
+    hits.set(key, { n: 1, reset: now + windowMs });
+    return false;
+  }
+  h.n += 1;
+  return h.n > max;
+}
+setInterval(() => {
+  const now = Date.now();
+  for (const [k, h] of hits) if (h.reset < now) hits.delete(k);
+}, 60_000).unref();
+
+function clientIp(req) {
+  return req.headers['x-real-ip'] || req.headers['x-forwarded-for']?.split(',')[0]?.trim() || req.socket.remoteAddress;
+}
+
+// ---------- uploads ----------
+
+const ALLOWED = {
+  'image/jpeg': '.jpg',
+  'image/png': '.png',
+  'image/webp': '.webp',
+  'image/gif': '.gif',
+  'audio/mpeg': '.mp3',
+  'audio/mp3': '.mp3',
+  'audio/mp4': '.m4a',
+  'audio/x-m4a': '.m4a',
+  'audio/aac': '.aac',
+  'audio/wav': '.wav',
+  'audio/x-wav': '.wav',
+};
+
+const upload = multer({
+  storage: multer.diskStorage({
+    destination: UPLOAD_DIR,
+    filename: (req, file, cb) => cb(null, `${Date.now().toString(36)}-${crypto.randomBytes(6).toString('hex')}${ALLOWED[file.mimetype]}`),
+  }),
+  limits: { fileSize: 40 * 1024 * 1024, files: 1 },
+  fileFilter: (req, file, cb) => {
+    if (ALLOWED[file.mimetype]) return cb(null, true);
+    cb(new Error(`Unsupported file type: ${file.mimetype || 'unknown'}. Use JPG, PNG, WEBP, GIF or MP3/M4A.`));
+  },
+});
+
+// ---------- app ----------
+
+const app = express();
+app.disable('x-powered-by');
+app.set('trust proxy', 'loopback');
+
+app.use(express.json({ limit: '1mb' }));
+
+app.get('/healthz', (req, res) => res.json({ ok: true }));
+
+app.get('/api/content', (req, res) => {
+  res.set('Cache-Control', 'no-store');
+  res.json(getContent());
+});
+
+app.post('/api/rsvp', (req, res) => {
+  if (limited(`rsvp:${clientIp(req)}`, 20, 60 * 60 * 1000)) return res.status(429).json({ error: 'Too many' });
+  const clip = (v, n = 500) => (typeof v === 'string' ? v.slice(0, n) : '');
+  const entry = {
+    at: new Date().toISOString(),
+    answer: clip(req.body?.answer, 20) || 'yes',
+    food: clip(req.body?.food, 100),
+    vibe: clip(req.body?.vibe, 100),
+    note: clip(req.body?.note, 1000),
+    noAttempts: Number(req.body?.noAttempts) || 0,
+    ua: clip(req.headers['user-agent'], 200),
+  };
+  const list = readJSON(RSVP_FILE, []);
+  list.push(entry);
+  writeJSON(RSVP_FILE, list.slice(-500));
+  res.json({ ok: true });
+});
+
+// --- admin api ---
+
+app.post('/api/admin/login', (req, res) => {
+  if (limited(`login:${clientIp(req)}`, 10, 15 * 60 * 1000)) {
+    return res.status(429).json({ error: 'Too many attempts. Try again in 15 minutes.' });
+  }
+  if (!passwordMatches(req.body?.password)) return res.status(401).json({ error: 'Wrong password' });
+  const secure = isHttps(req) ? '; Secure' : '';
+  res.set('Set-Cookie', `tb_admin=${encodeURIComponent(makeToken())}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${SESSION_TTL_MS / 1000}${secure}`);
+  res.json({ ok: true });
+});
+
+app.post('/api/admin/logout', (req, res) => {
+  res.set('Set-Cookie', 'tb_admin=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0');
+  res.json({ ok: true });
+});
+
+app.get('/api/admin/me', requireAdmin, (req, res) => res.json({ ok: true }));
+
+app.get('/api/admin/content', requireAdmin, (req, res) => {
+  res.set('Cache-Control', 'no-store');
+  res.json({ content: getContent(), defaults: DEFAULTS });
+});
+
+app.put('/api/admin/content', requireAdmin, (req, res) => {
+  if (!isPlainObject(req.body)) return res.status(400).json({ error: 'Invalid content' });
+  // Only keep keys we know about so a bad payload can't bloat the file.
+  const clean = {};
+  for (const k of Object.keys(DEFAULTS)) if (k in req.body) clean[k] = req.body[k];
+  writeJSON(CONTENT_FILE, clean);
+  pruneUploads(JSON.stringify(clean));
+  res.json({ ok: true, content: getContent() });
+});
+
+// Delete uploads the saved content no longer references. Files younger than
+// an hour are kept: they may belong to an edit that hasn't been saved yet.
+function pruneUploads(json) {
+  fs.readdir(UPLOAD_DIR, (err, names) => {
+    if (err) return;
+    const cutoff = Date.now() - 60 * 60 * 1000;
+    for (const name of names) {
+      if (json.includes(`/uploads/${name}`)) continue;
+      const file = path.join(UPLOAD_DIR, name);
+      fs.stat(file, (e, st) => {
+        if (!e && st.isFile() && st.mtimeMs < cutoff) fs.rm(file, { force: true }, () => {});
+      });
+    }
+  });
+}
+
+app.post('/api/admin/upload', requireAdmin, (req, res) => {
+  upload.single('file')(req, res, (err) => {
+    if (err) {
+      const msg = err.code === 'LIMIT_FILE_SIZE' ? 'File is too large (max 40MB).' : err.message;
+      return res.status(400).json({ error: msg });
+    }
+    if (!req.file) return res.status(400).json({ error: 'No file received' });
+    res.json({ ok: true, url: `/uploads/${req.file.filename}` });
+  });
+});
+
+app.delete('/api/admin/upload/:name', requireAdmin, (req, res) => {
+  const name = path.basename(req.params.name);
+  if (!/^[a-z0-9]+-[a-f0-9]+\.[a-z0-9]+$/.test(name)) return res.status(400).json({ error: 'Bad name' });
+  fs.rm(path.join(UPLOAD_DIR, name), { force: true }, () => res.json({ ok: true }));
+});
+
+app.get('/api/admin/rsvps', requireAdmin, (req, res) => {
+  res.set('Cache-Control', 'no-store');
+  res.json(readJSON(RSVP_FILE, []).reverse());
+});
+
+app.delete('/api/admin/rsvps', requireAdmin, (req, res) => {
+  writeJSON(RSVP_FILE, []);
+  res.json({ ok: true });
+});
+
+// --- static ---
+
+app.use('/uploads', express.static(UPLOAD_DIR, { immutable: true, maxAge: '365d', index: false }));
+app.use('/vendor/gsap', express.static(path.join(__dirname, 'node_modules/gsap/dist'), { maxAge: '30d' }));
+app.use('/vendor/confetti', express.static(path.join(__dirname, 'node_modules/canvas-confetti/dist'), { maxAge: '30d' }));
+app.use('/memes', express.static(path.join(__dirname, 'public/memes'), { maxAge: '30d' }));
+
+// The card is rendered client-side, but the <title> and share preview are
+// filled in here so links shared in WhatsApp show her name.
+const BUILD = Date.now().toString(36);
+const escapeHtml = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
+function sendPage(file, res) {
+  const c = getContent();
+  const html = fs
+    .readFileSync(path.join(__dirname, 'public', file), 'utf8')
+    .replaceAll('{{TITLE}}', escapeHtml(c.pageTitle))
+    .replaceAll('{{NAME}}', escapeHtml(c.herName))
+    .replaceAll('{{V}}', BUILD);
+  res.set('Cache-Control', 'no-cache').type('html').send(html);
+}
+
+app.get('/', (req, res) => sendPage('index.html', res));
+app.get(['/admin', '/admin/'], (req, res) => {
+  res.set('X-Robots-Tag', 'noindex');
+  sendPage('admin/index.html', res);
+});
+app.use(express.static(path.join(__dirname, 'public'), { index: false, maxAge: '1h' }));
+
+app.use((req, res) => res.status(404).send('Not found'));
+
+app.listen(PORT, () => console.log(`tika-birthday listening on :${PORT} (data: ${DATA_DIR})`));

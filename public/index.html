@@ -1,0 +1,248 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="theme-color" content="#FF4F9A" />
+  <meta name="color-scheme" content="light" />
+  <meta name="robots" content="noindex" />
+  <title>{{TITLE}}</title>
+  <meta property="og:title" content="{{TITLE}}" />
+  <meta property="og:description" content="A little birthday surprise for {{NAME}} 🎁 Tap to open!" />
+  <meta property="og:type" content="website" />
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🎂</text></svg>" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Caveat:wght@500;700&family=Fredoka:wght@400;500;600;700&family=Nunito:wght@500;700;800&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="/css/card.css?v={{V}}" />
+</head>
+<body class="is-locked">
+
+  <!-- ============ GATE ============ -->
+  <div class="gate" id="gate" role="dialog" aria-label="Open your birthday card">
+    <div class="gate__rays" aria-hidden="true"></div>
+    <div class="gate__inner">
+      <p class="gate__title" data-bind="gate.title">Psst…</p>
+      <button class="gift" id="giftBtn" aria-label="Unwrap your gift">
+        <span class="gift__lid"><span class="gift__bow"><i></i><i></i></span></span>
+        <span class="gift__box"><span class="gift__ribbon"></span></span>
+        <span class="gift__shadow"></span>
+      </button>
+      <p class="gate__sub" data-bind="gate.subtitle"></p>
+      <button class="btn btn--sun gate__cta" id="gateCta"><span data-bind="gate.button">Tap to unwrap 🎁</span></button>
+    </div>
+  </div>
+
+  <!-- ============ CHROME ============ -->
+  <div class="progress" aria-hidden="true"><span id="progressBar"></span></div>
+  <button class="music-btn" id="musicBtn" aria-label="Toggle music" hidden>
+    <span class="music-btn__icon">🎵</span>
+    <span class="music-btn__bars" aria-hidden="true"><i></i><i></i><i></i><i></i></span>
+  </button>
+  <div class="fx-layer" id="fxLayer" aria-hidden="true"></div>
+
+  <main id="card">
+
+    <!-- ============ HERO ============ -->
+    <section class="hero" id="hero">
+      <div class="hero__blobs" aria-hidden="true"><span></span><span></span><span></span></div>
+      <div class="balloons" id="balloons" aria-label="Balloons — tap to pop them"></div>
+      <div class="hero__content">
+        <p class="eyebrow hero__eyebrow"><span data-bind="hero.eyebrow"></span></p>
+        <h1 class="hero__title">
+          <span class="hero__line" id="heroLine"></span>
+          <span class="hero__name" id="heroName"></span>
+        </h1>
+        <p class="hero__sub" data-bind="hero.subtitle"></p>
+        <p class="hero__hint">psst… pop the balloons 🎈</p>
+      </div>
+      <div class="scroll-cue" aria-hidden="true"><span>scroll</span><i></i></div>
+    </section>
+
+    <div class="marquee marquee--pink" aria-hidden="true">
+      <div class="marquee__track" id="marquee1"></div>
+    </div>
+
+    <!-- ============ STATS ============ -->
+    <section class="section stats-sec">
+      <div class="stats" id="stats"></div>
+    </section>
+
+    <!-- ============ CAKE ============ -->
+    <section class="section cake-sec" id="cakeSec">
+      <header class="sec-head">
+        <span class="sticker-tag">step 1</span>
+        <h2 class="sec-title" data-bind="cake.title"></h2>
+        <p class="sec-sub" data-bind="cake.hint"></p>
+      </header>
+      <div class="cake-stage">
+        <div class="cake" id="cake">
+          <div class="cake__candles" id="candles"></div>
+          <div class="cake__tier cake__tier--top"><span class="drip"></span></div>
+          <div class="cake__tier cake__tier--bottom"><span class="sprinkles"></span></div>
+          <div class="cake__plate"></div>
+        </div>
+      </div>
+      <div class="cake-done" id="cakeDone" hidden>
+        <p data-bind="cake.done"></p>
+      </div>
+    </section>
+
+    <!-- ============ MEMORIES ============ -->
+    <section class="section memories-sec" id="memories">
+      <header class="sec-head">
+        <span class="sticker-tag sticker-tag--sky">step 2</span>
+        <h2 class="sec-title" data-bind="memories.title"></h2>
+        <p class="sec-sub" data-bind="memories.subtitle"></p>
+      </header>
+      <div class="deck" id="deck" aria-roledescription="carousel"></div>
+      <div class="deck-ctrl">
+        <button class="round-btn" id="deckPrev" aria-label="Previous photo">←</button>
+        <span class="deck-count" id="deckCount">1 / 1</span>
+        <button class="round-btn" id="deckNext" aria-label="Next photo">→</button>
+      </div>
+      <div class="film" id="film" aria-hidden="true">
+        <div class="film__row"><div class="film__track" id="filmA"></div></div>
+        <div class="film__row film__row--rev"><div class="film__track" id="filmB"></div></div>
+      </div>
+    </section>
+
+    <div class="marquee marquee--sun" aria-hidden="true">
+      <div class="marquee__track" id="marquee2"></div>
+    </div>
+
+    <!-- ============ MEMES ============ -->
+    <section class="section memes-sec">
+      <header class="sec-head">
+        <span class="sticker-tag sticker-tag--grape">step 3</span>
+        <h2 class="sec-title" data-bind="memes.title"></h2>
+        <p class="sec-sub" data-bind="memes.subtitle"></p>
+      </header>
+      <div class="memes" id="memes"></div>
+    </section>
+
+    <!-- ============ LETTER ============ -->
+    <section class="section letter-sec" id="letterSec">
+      <header class="sec-head">
+        <span class="sticker-tag sticker-tag--mint">step 4</span>
+        <h2 class="sec-title" data-bind="letter.title"></h2>
+        <p class="sec-sub">Tap the envelope 💌</p>
+      </header>
+      <div class="envelope" id="envelope" role="button" tabindex="0" aria-label="Open the letter">
+        <div class="envelope__back"></div>
+        <div class="letter" id="letter">
+          <img class="letter__gif" id="letterGif" alt="" loading="lazy" />
+          <div class="letter__body" id="letterBody"></div>
+          <p class="letter__sign" data-bind="letter.signoff"></p>
+        </div>
+        <div class="envelope__front"></div>
+        <div class="envelope__flap"></div>
+        <div class="envelope__seal">💖</div>
+      </div>
+    </section>
+
+    <!-- ============ REASONS ============ -->
+    <section class="section reasons-sec">
+      <header class="sec-head">
+        <span class="sticker-tag sticker-tag--peach">step 5</span>
+        <h2 class="sec-title" data-bind="reasons.title"></h2>
+        <p class="sec-sub" data-bind="reasons.subtitle"></p>
+      </header>
+      <div class="reasons" id="reasons"></div>
+    </section>
+
+    <!-- ============ SURPRISE (scratch) ============ -->
+    <section class="section surprise-sec" id="surpriseSec">
+      <header class="sec-head">
+        <span class="sticker-tag">step 6</span>
+        <h2 class="sec-title" data-bind="surprise.title"></h2>
+        <p class="sec-sub" data-bind="surprise.hint"></p>
+      </header>
+      <div class="scratch" id="scratch">
+        <div class="scratch__under">
+          <span class="scratch__emoji">💘</span>
+          <p data-bind="surprise.reveal"></p>
+        </div>
+        <canvas class="scratch__canvas" id="scratchCanvas"></canvas>
+      </div>
+    </section>
+
+    <!-- ============ PROGRAMME ============ -->
+    <section class="section programme-sec" id="programme">
+      <header class="sec-head">
+        <span class="sticker-tag sticker-tag--sky">the plan</span>
+        <h2 class="sec-title" data-bind="programme.title"></h2>
+        <p class="sec-sub"><span class="date-pill" data-bind="programme.dateLabel"></span></p>
+        <p class="sec-sub" data-bind="programme.subtitle"></p>
+      </header>
+      <ol class="timeline" id="timeline">
+        <svg class="timeline__path" aria-hidden="true" preserveAspectRatio="none"><path id="timelinePath" /></svg>
+      </ol>
+    </section>
+
+    <!-- ============ RSVP ============ -->
+    <section class="section rsvp-sec" id="rsvp">
+      <div class="rsvp">
+        <div class="rsvp__waiting">
+          <img id="waitingGif" alt="" loading="lazy" />
+          <span data-bind="rsvp.waitingCaption"></span>
+        </div>
+        <h2 class="rsvp__q" data-bind="rsvp.question"></h2>
+
+        <div class="rsvp__field">
+          <p class="rsvp__label" data-bind="rsvp.foodTitle"></p>
+          <div class="chips" id="foodChips" role="radiogroup"></div>
+        </div>
+        <div class="rsvp__field">
+          <p class="rsvp__label" data-bind="rsvp.vibeTitle"></p>
+          <div class="chips" id="vibeChips" role="radiogroup"></div>
+        </div>
+        <div class="rsvp__field">
+          <label class="rsvp__label" for="rsvpNote" data-bind="rsvp.noteTitle"></label>
+          <textarea id="rsvpNote" rows="2" maxlength="400" placeholder="optional, but I'd love to read it 🥺"></textarea>
+        </div>
+
+        <div class="rsvp__actions" id="rsvpActions">
+          <button class="btn btn--yes" id="yesBtn"><span data-bind="rsvp.yesLabel"></span></button>
+          <button class="btn btn--no" id="noBtn"><span data-bind="rsvp.noLabel"></span></button>
+        </div>
+        <p class="rsvp__tease" id="noTease" aria-live="polite"></p>
+      </div>
+    </section>
+
+    <footer class="footer">
+      <p data-bind="footer"></p>
+      <p class="footer__heart">💖</p>
+    </footer>
+  </main>
+
+  <!-- ============ LIGHTBOX ============ -->
+  <div class="lightbox" id="lightbox" hidden>
+    <button class="lightbox__close" id="lightboxClose" aria-label="Close">✕</button>
+    <figure>
+      <img id="lightboxImg" alt="" />
+      <figcaption id="lightboxCap"></figcaption>
+    </figure>
+  </div>
+
+  <!-- ============ SUCCESS ============ -->
+  <div class="success" id="success" hidden>
+    <div class="success__card">
+      <img id="successGif" alt="" />
+      <h2 data-bind="rsvp.successTitle"></h2>
+      <p data-bind="rsvp.successText"></p>
+      <a class="btn btn--wa" id="waLink" href="#" rel="noopener">
+        <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><path fill="currentColor" d="M12 2a10 10 0 0 0-8.6 15.1L2 22l5-1.3A10 10 0 1 0 12 2Zm0 18.2a8.2 8.2 0 0 1-4.2-1.2l-.3-.2-3 .8.8-2.9-.2-.3A8.2 8.2 0 1 1 12 20.2Zm4.5-6.1c-.2-.1-1.5-.7-1.7-.8-.2-.1-.4-.1-.6.1l-.8 1c-.1.2-.3.2-.5.1a6.7 6.7 0 0 1-3.3-2.9c-.2-.4.2-.4.7-1.3.1-.2 0-.3 0-.4l-.8-1.8c-.2-.5-.4-.4-.6-.4h-.5a1 1 0 0 0-.7.3 3 3 0 0 0-.9 2.2 5.2 5.2 0 0 0 1.1 2.8 11.9 11.9 0 0 0 4.6 4c1.7.7 2.4.8 3.2.7.5-.1 1.5-.6 1.7-1.2.2-.6.2-1.1.2-1.2-.1-.1-.3-.2-.5-.3Z"/></svg>
+          <span>Send on WhatsApp</span>
+      </a>
+      <p class="success__count" id="successCount"></p>
+    </div>
+  </div>
+
+  <script src="/vendor/gsap/gsap.min.js"></script>
+  <script src="/vendor/gsap/ScrollTrigger.min.js"></script>
+  <script src="/vendor/confetti/confetti.browser.js"></script>
+  <script src="/js/sound.js?v={{V}}"></script>
+  <script src="/js/card.js?v={{V}}"></script>
+</body>
+</html>
